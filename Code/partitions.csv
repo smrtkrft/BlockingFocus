@@ -1,0 +1,12 @@
+# Blocking Focus partition table — 4MB flash, OTA enabled (A/B) + userdata.
+# OTA slots shrunk from 0x1F0000 → 0x1E0000 (1.875 MB) to make room for a
+# 128 KB `userdata` partition: holds the bf_secure_store user-script blob
+# (~100 KB usable after SPIFFS overhead). Plain NVS partition still backs
+# bf_secure_store's encrypted key/value namespaces (`bf_sec`, `bf_sec_int`).
+# Name,     Type, SubType,  Offset,    Size
+nvs,        data, nvs,      0x9000,    0x6000
+phy_init,   data, phy,      0xf000,    0x1000
+otadata,    data, ota,      0x10000,   0x2000
+ota_0,      app,  ota_0,    0x20000,   0x1E0000
+ota_1,      app,  ota_1,    0x200000,  0x1E0000
+userdata,   data, spiffs,   0x3E0000,  0x20000

@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>BF Status Bar — Icon Alternatives</title>
+<style>
+  body { font-family: ui-monospace, "SF Mono", Consolas, monospace;
+         background: #181818; color: #ddd; padding: 24px; line-height: 1.4; }
+  h1 { color: #fff; margin: 0 0 4px; }
+  h2 { color: #ffd166; margin: 32px 0 12px; border-bottom: 1px solid #333;
+       padding-bottom: 6px; }
+  h3 { color: #6fc5d5; margin: 18px 0 10px; }
+  p  { color: #aaa; max-width: 60ch; }
+  .row { display: flex; flex-wrap: wrap; gap: 22px; }
+  .card { background: #0e0e0e; border: 1px solid #2a2a2a;
+          border-radius: 8px; padding: 14px 16px; min-width: 200px; }
+  .name { color: #6fc5d5; font-weight: bold; margin-bottom: 8px; }
+  .desc { color: #888; font-size: 12px; margin-bottom: 8px; max-width: 200px; }
+  .grid { display: inline-grid; gap: 1px; background: #2a2a2a;
+          padding: 1px; border-radius: 3px; }
+  .px   { width: 14px; height: 14px; background: #000; }
+  .px.on{ background: #ffffff; }
+  .label{ color: #888; font-size: 11px; margin-top: 4px; text-align: center; }
+  .pick { background: #1c2c1c; border-color: #3a5c3a; }
+  .pick .name::after { content: " ← onaylı"; color: #8fc; }
+  .new  { background: #2c1c1c; border-color: #5c3a3a; }
+  .new .name::after { content: " ← yeni"; color: #fc8; }
+</style>
+</head>
+<body>
+
+<h1>BF Status Bar — İkon Alternatifleri (rev 2)</h1>
+<p>1bpp monokrom, beyaz=ON. WiFi/BLE 14×12 px, Battery 22×9 px.
+   Onaylı: <b>WiFi=W4-ON, BLE=B4</b>. Pil &lt;15% yanıp söner (anlaştık).</p>
+
+<h2>WiFi — W4 (Cellular Bars), 5 farklı OFF tasarımı</h2>
+<p>W4-ON onaylı. Aşağıda OFF için 5 alternatif: hangisi sana en mantıklı geliyor?</p>
+<div class="row" id="wifi-row"></div>
+
+<h2>BLE — B4 (Onaylı)</h2>
+<div class="row" id="ble-row"></div>
+
+<h2>Battery — Şarj Durumu Alternatifleri</h2>
+<p>Pil seviyeleri + 4 farklı şarj-oluyor görseli. Şarj sırasında ekrana gelmesi
+   gereken işaret için seç.</p>
+<h3>Normal seviyeler (şarj olmuyor)</h3>
+<div class="row" id="bat-normal-row"></div>
+<h3>Şarj oluyor — alternatifler</h3>
+<div class="row" id="bat-charge-row"></div>
+
+<script>
+function render(grid, rows, cols, bmp) {
+    grid.style.gridTemplateColumns = `repeat(${cols}, 14px)`;
+    grid.style.gridTemplateRows    = `repeat(${rows}, 14px)`;
+    for (let y = 0; y < rows; y++) {
+        const row = bmp[y] || "";
+        for (let x = 0; x < cols; x++) {
+            const cell = document.createElement("div");
+            cell.className = "px" + (row[x] === "#" ? " on" : "");
+            grid.appendChild(cell);
+        }
+    }
+}
+
+function card(parent, name, desc, rows, cols, bmp, klass) {
+    const c = document.createElement("div");
+    c.className = "card" + (klass ? " " + klass : "");
+    const n = document.createElement("div"); n.className = "name"; n.textContent = name;
+    c.appendChild(n);
+    if (desc) { const d = document.createElement("div"); d.className = "desc"; d.textContent = desc; c.appendChild(d); }
+    const g = document.createElement("div"); g.className = "grid";
+    render(g, rows, cols, bmp);
+    c.appendChild(g);
+    parent.appendChild(c);
+}
+
+// ===== WIFI W4 — ON (onaylı) + 5 OFF alternatifi =====================
+const W_R = 12, W_C = 14;
+
+const w4_on = [
+    "..............",
+    "..............",
+    "..........##..",
+    "..........##..",
+    "..........##..",
+    ".......##.##..",
+    ".......##.##..",
+    "....##.##.##..",
+    "....##.##.##..",
+    ".##.##.##.##..",
+    ".##.##.##.##..",
+    ".##.##.##.##..",
+];
+
+// W4-OFF-A — Tüm barlar minimum yükseklikte (eşit, kısa) → "sinyal eşit
+// dağıtık ama düşük" anlamı.
+const w4_off_a = [
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    ".##.##.##.##..",
+    ".##.##.##.##..",
+    ".##.##.##.##..",
+];
+
+// W4-OFF-B — Sadece en kısa bar görünür (1 çubuk = sinyal yok).
+const w4_off_b = [
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    ".##...........",
+    ".##...........",
+    ".##...........",
+];
+
+// W4-OFF-C — Bütün barlar var ama içleri boş (sadece baseline çizgisi
+// + bar tepelerinde nokta). Çubukların var olduğunu söylüyor ama içi
+// dolu değil — "bağlantı yok ama radyo var".
+const w4_off_c = [
+    "..............",
+    "..............",
+    "..........##..",
+    "..............",
+    "..............",
+    ".......##.....",
+    "..............",
+    "....##........",
+    "..............",
+    ".##...........",
+    "..............",
+    ".##.##.##.##..",
+];
+
+// W4-OFF-D — Üzerinde "!" işareti — net "sorun var" sinyali.
+const w4_off_d = [
+    "..............",
+    "..............",
+    "......##......",
+    "......##......",
+    "......##......",
+    "......##......",
+    "......##......",
+    "......##......",
+    "..............",
+    "......##......",
+    "......##......",
+    "..............",
+];
+
+// W4-OFF-E — Tamamen boş (görünmez). Telefon status-bar konvansiyonu:
+// disconnected=hide. En sade.
+const w4_off_e = [
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+];
+
+const wifiRow = document.getElementById("wifi-row");
+card(wifiRow, "W4 — ON", "Onaylı: 4 dikey artan bar", W_R, W_C, w4_on, "pick");
+card(wifiRow, "W4-OFF-A", "Tüm barlar eşit kısa — \"hepsi düşük\"", W_R, W_C, w4_off_a, "new");
+card(wifiRow, "W4-OFF-B", "Tek kısa bar — \"sinyal yok\"", W_R, W_C, w4_off_b, "new");
+card(wifiRow, "W4-OFF-C", "Bar tepe noktaları + baseline — \"radyo var, bağlı değil\"", W_R, W_C, w4_off_c, "new");
+card(wifiRow, "W4-OFF-D", "! ünlem — \"problem\"", W_R, W_C, w4_off_d, "new");
+card(wifiRow, "W4-OFF-E", "Boş (gizle) — telefon status bar konvansiyonu", W_R, W_C, w4_off_e, "new");
+
+// ===== BLE B4 — ON (onaylı) ==========================================
+const E_R = 12, E_C = 14;
+const b4_on = [
+    "......##......",
+    "......#.#.....",
+    "...#..#..#....",
+    "....#.#..#....",
+    ".....##.#.....",
+    "......##......",
+    ".....##.#.....",
+    "....#.#..#....",
+    "...#..#..#....",
+    "......#.#.....",
+    "......##......",
+    "..............",
+];
+const bleRow = document.getElementById("ble-row");
+card(bleRow, "B4 — Bluetooth Outline", "Onaylı (geliyor)", E_R, E_C, b4_on, "pick");
+
+// ===== BATTERY — normal + charging variants ==========================
+const BAT_R = 9, BAT_C = 22;
+
+// Helper: build a battery bitmap with optional fill/percent and optional
+// charging-overlay function (overlay receives row,col, returns bool).
+function batBmp(percent, overlay) {
+    const innerW = 16;
+    const filled = Math.round(innerW * percent / 100);
+    const rows = [];
+    for (let y = 0; y < BAT_R; y++) {
+        let r = "";
+        for (let x = 0; x < BAT_C; x++) {
+            let on = false;
+            // body frame (cols 0..19)
+            if (x < 20) {
+                if (y === 0 || y === BAT_R - 1) on = true;
+                if (x === 0 || x === 19) on = true;
+            }
+            // terminal nub (cols 20..21, rows 2..6)
+            if (x >= 20 && y >= 2 && y <= 6) on = true;
+            // fill (cols 2..2+filled-1, rows 2..6)
+            if (x >= 2 && x < 2 + filled && y >= 2 && y <= BAT_R - 3) on = true;
+            // overlay (e.g. lightning bolt) — XOR with fill so bolt is
+            // visible even on filled background
+            if (overlay && overlay(y, x)) on = !on;
+            r += on ? "#" : ".";
+        }
+        rows.push(r);
+    }
+    return rows;
+}
+
+// Normal levels (for visual reference)
+const batNormalRow = document.getElementById("bat-normal-row");
+card(batNormalRow, "Bat — 100%", "Tam dolu", BAT_R, BAT_C, batBmp(100), null);
+card(batNormalRow, "Bat — 80% (test)", "Şu an gösterilen test değeri", BAT_R, BAT_C, batBmp(80), "pick");
+card(batNormalRow, "Bat — 50%", "Yarım", BAT_R, BAT_C, batBmp(50), null);
+card(batNormalRow, "Bat — 14% (yanıp söner)", "1 Hz blink (anlaşmalı)", BAT_R, BAT_C, batBmp(14), null);
+
+// Charging overlays =================================================
+// Lightning bolt — small, 5×5 centered. Bitmap: 1=on
+//   .##..
+//   ##...
+//   .###.
+//   ...##
+//   ..##.
+const boltSmall = (centerRow, centerCol) => (y, x) => {
+    const dy = y - centerRow, dx = x - centerCol;
+    if (dy < -2 || dy > 2 || dx < -2 || dx > 2) return false;
+    const pat = [
+        // dx: -2 -1  0  1  2
+            [0, 1, 1, 0, 0], // dy = -2
+            [1, 1, 0, 0, 0], // dy = -1
+            [0, 1, 1, 1, 0], // dy =  0
+            [0, 0, 0, 1, 1], // dy =  1
+            [0, 0, 1, 1, 0], // dy =  2
+    ];
+    return pat[dy + 2][dx + 2] === 1;
+};
+
+// Plug — 4×5 (head 2 wide, body 2 wide), simple.
+const plugSmall = (originRow, originCol) => (y, x) => {
+    const dy = y - originRow, dx = x - originCol;
+    // head (left two prongs):
+    if (dx === 0 && (dy === 0 || dy === 4)) return true;
+    if (dx === 1 && (dy === 0 || dy === 4)) return true;
+    // body
+    if (dx >= 1 && dx <= 3 && dy >= 1 && dy <= 3) return true;
+    // cable
+    if (dx === 4 && dy === 2) return true;
+    if (dx === 5 && dy === 2) return true;
+    return false;
+};
+
+// Up-arrow — 5×5
+const arrowUp = (cy, cx) => (y, x) => {
+    const dy = y - cy, dx = x - cx;
+    if (dy < -2 || dy > 2 || dx < -2 || dx > 2) return false;
+    const pat = [
+            [0, 0, 1, 0, 0],
+            [0, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1],
+            [0, 0, 1, 0, 0],
+            [0, 0, 1, 0, 0],
+    ];
+    return pat[dy + 2][dx + 2] === 1;
+};
+
+const batChargeRow = document.getElementById("bat-charge-row");
+
+// CHG-1: bolt, %50 fill, bolt centered (right of fill end)
+card(batChargeRow, "CHG-1 — Bolt (orta)",
+     "Yıldırım pil ortasında, %50 fill. Klasik şarj göstergesi.",
+     BAT_R, BAT_C, batBmp(50, boltSmall(4, 11)));
+
+// CHG-2: bolt over outlined battery (no fill) — "just plugged in"
+card(batChargeRow, "CHG-2 — Bolt + boş",
+     "Yıldırım tam ortada, fill yok. \"Yeni takıldı\".",
+     BAT_R, BAT_C, batBmp(0, boltSmall(4, 10)));
+
+// CHG-3: arrow up over %80 fill
+card(batChargeRow, "CHG-3 — ↑ Yukarı ok",
+     "%80 fill + yukarı ok. \"Doluyor\" yön hissi.",
+     BAT_R, BAT_C, batBmp(80, arrowUp(4, 11)));
+
+// CHG-4: bolt at left, fill right
+card(batChargeRow, "CHG-4 — Bolt (sol)",
+     "Yıldırım sol başta, %50 fill. Çift sembol.",
+     BAT_R, BAT_C, batBmp(50, boltSmall(4, 4)));
+
+// =====================================================================
+// CHG-5..9 — Yeni alternatifler
+// =====================================================================
+
+// CHG-5: bolt REPLACES the terminal nub (sleek built-in look). The
+// nub is replaced by a 5×9 lightning-bolt cluster on the right end.
+// Total bounding box becomes 25×9 instead of 22×9 — wider but more
+// integrated visually.
+const BAT_C_WIDE = 25;
+function batBoltAsNub(percent) {
+    const innerW = 16;
+    const filled = Math.round(innerW * percent / 100);
+    // 5×9 bolt pattern at cols 20..24
+    const bolt = [
+        "..##.",
+        ".##..",
+        ".##..",
+        "##...",
+        "####.",
+        ".####",
+        "...##",
+        "..##.",
+        "..##.",
+    ];
+    const rows = [];
+    for (let y = 0; y < BAT_R; y++) {
+        let r = "";
+        for (let x = 0; x < BAT_C_WIDE; x++) {
+            let on = false;
+            if (x < 20) {
+                if (y === 0 || y === BAT_R - 1) on = true;
+                if (x === 0 || x === 19) on = true;
+                if (x >= 2 && x < 2 + filled && y >= 2 && y <= BAT_R - 3) on = true;
+            } else {
+                // bolt instead of nub
+                const bx = x - 20, by = y;
+                if (bolt[by] && bolt[by][bx] === "#") on = true;
+            }
+            r += on ? "#" : ".";
+        }
+        rows.push(r);
+    }
+    return rows;
+}
+card(batChargeRow, "CHG-5 — Bolt = nub",
+     "Pilin ucundaki terminal nub'ı yıldırıma dönüşmüş. Sade, yer kaplamaz.",
+     BAT_R, BAT_C_WIDE, batBoltAsNub(50));
+
+// CHG-6: "+" sign overlay (5×5 cross) in middle of empty fill area.
+// Universal "add energy" cue, no thunder weather metaphor.
+const plusSmall = (cy, cx) => (y, x) => {
+    const dy = y - cy, dx = x - cx;
+    if (dy === 0 && Math.abs(dx) <= 2) return true;
+    if (dx === 0 && Math.abs(dy) <= 2) return true;
+    return false;
+};
+card(batChargeRow, "CHG-6 — Plus sign",
+     "+ işareti ortada (boş fill üzerinde). Yıldırım yerine sade.",
+     BAT_R, BAT_C, batBmp(0, plusSmall(4, 10)));
+
+// CHG-7: hatched fill — every other column is on, gives a "moving"
+// look. In firmware this can be animated by shifting the offset each
+// 250 ms; at static frame it's a clear texture.
+function batHatched(percent, phase) {
+    const innerW = 16;
+    const filled = Math.round(innerW * percent / 100);
+    const rows = [];
+    for (let y = 0; y < BAT_R; y++) {
+        let r = "";
+        for (let x = 0; x < BAT_C; x++) {
+            let on = false;
+            if (x < 20) {
+                if (y === 0 || y === BAT_R - 1) on = true;
+                if (x === 0 || x === 19) on = true;
+            }
+            if (x >= 20 && y >= 2 && y <= 6) on = true;
+            // hatched fill: every other interior column
+            if (x >= 2 && x < 2 + filled && y >= 2 && y <= BAT_R - 3) {
+                if ((x + phase) % 2 === 0) on = true;
+            }
+            r += on ? "#" : ".";
+        }
+        rows.push(r);
+    }
+    return rows;
+}
+card(batChargeRow, "CHG-7 — Hatched fill",
+     "Şeritli fill (1px dolu, 1px boş). Animasyonda kayar → akan enerji hissi.",
+     BAT_R, BAT_C, batHatched(50, 0));
+
+// CHG-8: external lightning-bolt symbol on the LEFT, battery on the
+// right. iOS status bar style. Total 28 wide.
+const BAT_C_EXT = 28;
+function batExtBolt(percent) {
+    const innerW = 16;
+    const filled = Math.round(innerW * percent / 100);
+    const bolt = [
+        "..##.",
+        ".##..",
+        ".##..",
+        "##...",
+        "####.",
+        ".####",
+        "...##",
+        "..##.",
+        "..##.",
+    ];
+    const off = 6; // battery starts at col 6
+    const rows = [];
+    for (let y = 0; y < BAT_R; y++) {
+        let r = "";
+        for (let x = 0; x < BAT_C_EXT; x++) {
+            let on = false;
+            // bolt at cols 0..4
+            if (x < 5 && bolt[y] && bolt[y][x] === "#") on = true;
+            // battery body at cols off..off+19
+            const bx = x - off;
+            if (bx >= 0 && bx < 20) {
+                if (y === 0 || y === BAT_R - 1) on = true;
+                if (bx === 0 || bx === 19) on = true;
+                if (bx >= 2 && bx < 2 + filled && y >= 2 && y <= BAT_R - 3) on = true;
+            }
+            // nub at cols off+20..off+21
+            if (bx >= 20 && bx <= 21 && y >= 2 && y <= 6) on = true;
+            r += on ? "#" : ".";
+        }
+        rows.push(r);
+    }
+    return rows;
+}
+card(batChargeRow, "CHG-8 — Dış bolt (iOS-tarzı)",
+     "Yıldırım simgesi pilin SOLUNDA, ayrı sembol. iPhone status-bar tarzı.",
+     BAT_R, BAT_C_EXT, batExtBolt(80));
+
+// CHG-9: small plug shape on left + battery on right. Tiny 4×7 plug
+// drawing — two prongs + body + cable.
+function batPlug(percent) {
+    const innerW = 16;
+    const filled = Math.round(innerW * percent / 100);
+    const off = 6;
+    // plug: 2-prong + body + cable
+    //   row 1:  ##...
+    //   row 2:  ##.##
+    //   row 3:  .####
+    //   row 4:  ..###
+    //   row 5:  .####
+    //   row 6:  ##.##
+    //   row 7:  ##...
+    const plug = [
+        ".....",
+        "##...",
+        "##.##",
+        ".####",
+        "..###",
+        ".####",
+        "##.##",
+        "##...",
+        ".....",
+    ];
+    const rows = [];
+    for (let y = 0; y < BAT_R; y++) {
+        let r = "";
+        for (let x = 0; x < BAT_C_EXT; x++) {
+            let on = false;
+            if (x < 5 && plug[y] && plug[y][x] === "#") on = true;
+            const bx = x - off;
+            if (bx >= 0 && bx < 20) {
+                if (y === 0 || y === BAT_R - 1) on = true;
+                if (bx === 0 || bx === 19) on = true;
+                if (bx >= 2 && bx < 2 + filled && y >= 2 && y <= BAT_R - 3) on = true;
+            }
+            if (bx >= 20 && bx <= 21 && y >= 2 && y <= 6) on = true;
+            r += on ? "#" : ".";
+        }
+        rows.push(r);
+    }
+    return rows;
+}
+card(batChargeRow, "CHG-9 — Fiş + pil",
+     "Sol başta fiş simgesi, sağda pil + fill. \"Şarja takılı\" mesajı net.",
+     BAT_R, BAT_C_EXT, batPlug(50));
+
+</script>
+</body>
+</html>

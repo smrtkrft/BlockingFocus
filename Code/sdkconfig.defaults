@@ -1,0 +1,94 @@
+# Blocking Focus — SKAPP Faz 0 + cihaz-özgü ek ayarlar.
+CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Custom partition table — A/B OTA + SPIFFS storage (4MB layout).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# USB Serial/JTAG carries the boot log (and the CLI once sk_transport_usb is wired).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_USB_SERIAL_JTAG_ENABLED=y
+CONFIG_ESP_CONSOLE_HISTORY_BUFFER_SIZE=2048
+
+# Bootloader rollback enabled — required by sk_ota when added.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Bluetooth — NimBLE host stack (sk_transport_ble bunu kullanır).
+# ESP32-C6 BLE controller default'da açık; biz NimBLE host'unu seçiyoruz.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# Bond storage in NVS (sk_transport_ble sm_bonding=1 kullanır).
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+# NimBLE host task stack — default 4096 büyür mbedtls Curve25519 + ECDH
+# çağrıları altında stack overflow'a neden olur (peer connect anında
+# nimble_host task'inde "Stack protection fault" panic'i). 8192 byte
+# Curve25519 + SHA256 + GAP event handler için rahat alan bırakır.
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
+
+# ESP-IDF default event loop ("sys_evt") task stack — bumped from default
+# 2304 to 6144. WiFi STA_CONNECTED / GOT_IP fan out to several event-bus
+# subscribers (sk_wifi internal, bf_power, bf_timer, ...) which use
+# snprintf + ESP_LOG; newlib's reentrant lock acquire alone consumes
+# ~200 bytes per call. With 2304 the chain crashes under WiFi association
+# at marginal RSSI — observed Apr 2026 as a "Stack protection fault" in
+# task sys_evt. 6 KB gives the publish chain comfortable headroom.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
+
+# TLS certificate bundle — required by sk_api outbound HTTPS to verify
+# popular CA roots (Let's Encrypt, GoDaddy, etc.) without per-endpoint
+# cert config. IFTTT and most modern REST APIs work out of the box.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# NVS without encryption — fine for dev boards; enable on production.
+CONFIG_NVS_ENCRYPTION=n
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+
+# Bootloader log seviyesi WARN — boot dizisindeki "I (xx) boot:" verbose
+# satırları (partition tablosu, segment'ler, vb.) sustur. Hata/warning
+# yine görünür.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+
+# === Power management ===============================================
+# Without these three, WIFI_PS_MAX_MODEM is largely a no-op: the radio
+# wakes for DTIM but the CPU never tickless-idles, so the device burns
+# ~120 mA continuously even with the OLED off. Enabling PM + tickless
+# idle + automatic light-sleep is what actually delivers the ~3-15 mA
+# average draw target documented in CLAUDE.md.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+# Number of FreeRTOS ticks of idle before the kernel hands control to
+# the PM layer for sleep. 3 ticks = 30 ms at the default 100 Hz tick;
+# short enough that wake latency is invisible, long enough that we're
+# not paying the sleep-entry overhead on every micro-gap.
+CONFIG_FREERTOS_IDLE_TIME_BEFORE_SLEEP=3
+
+# BLE controller modem-sleep — required for PM_ENABLE to actually save
+# power on the BLE side. Without this the controller burns ~5-10 mA
+# even when there's no peer connected and advertising is paused.
+# Source clock = main XTAL so it survives DFS frequency changes.
+CONFIG_BT_LE_SLEEP_ENABLE=y
+CONFIG_BT_LE_LP_CLK_SRC_MAIN_XTAL=y
+
+# USB Serial/JTAG ↔ light-sleep otomatik kilit yönetimi.
+# IDF driver SOF (USB Start-of-Frame) paketlerini her FreeRTOS tick'inde
+# kontrol eder; host bağlıyken `usb_serial_jtag` adlı bir
+# ESP_PM_NO_LIGHT_SLEEP lock'u tutar, host kabloyu çekince serbest
+# bırakır (3 tick / ~30 ms gecikmeyle). Sonuç:
+#   * USB takılı (geliştirme): light_sleep bloklu → port her zaman
+#     erişilebilir, `idf.py flash` 10 dk sonra bile çalışır.
+#   * Pille çalışırken: light_sleep aktif → idle ortalama ~10-15 mA
+#     (CLAUDE.md hedef profili).
+# bf_power kendi NO_LIGHT_SLEEP lock'unu sadece ACTIVE durumlarda tutar
+# (UX latency için); SCREEN_OFF/LOW_POWER'da serbest bırakır → IDF
+# driver'ın USB-aware lock'una bırakır.
+# C6'da SOC_USB_SERIAL_JTAG_SUPPORT_LIGHT_SLEEP henüz tanımlanmadı
+# (TODO IDF-6395), bu yüzden Kconfig dependency sağlanır ve config
+# görünür/uygulanabilir.
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y

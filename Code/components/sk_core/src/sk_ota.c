@@ -168,6 +168,10 @@ static void check_task(void *arg)
         .url               = ca->url,
         .timeout_ms        = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        // We drive the request with open()/read() (streaming) so we can cap
+        // the manifest size; that path does NOT auto-follow 3xx, so we chase
+        // the Location header manually below.
+        .disable_auto_redirect = true,
     };
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) {
@@ -175,14 +179,32 @@ static void check_task(void *arg)
         set_state(SK_OTA_ERROR, "http init"); free(ca); vTaskDelete(NULL); return;
     }
 
-    if (esp_http_client_open(c, 0) != ESP_OK) {
-        SK_LOG_E("ota", "check.fail", "reason=http_open");
-        set_state(SK_OTA_ERROR, "http open");
-        esp_http_client_cleanup(c); free(ca); vTaskDelete(NULL); return;
+    // GitHub serves `releases/.../download/manifest.json` as a 302 to a
+    // cross-host CDN (release-assets.githubusercontent.com), often two hops
+    // (latest → tag → asset). Follow up to 5 redirects; without this the
+    // streaming fetch sees the 302 and aborts with "manifest http 302",
+    // so the version comparison below never runs.
+    int status = 0;
+    bool got_response = false;
+    for (int hop = 0; hop < 5; hop++) {
+        if (esp_http_client_open(c, 0) != ESP_OK) {
+            SK_LOG_E("ota", "check.fail", "reason=http_open");
+            set_state(SK_OTA_ERROR, "http open");
+            esp_http_client_cleanup(c); free(ca); vTaskDelete(NULL); return;
+        }
+        esp_http_client_fetch_headers(c);
+        status = esp_http_client_get_status_code(c);
+        if (status == 301 || status == 302 || status == 303 ||
+            status == 307 || status == 308) {
+            // Point the client at the Location header and reconnect.
+            if (esp_http_client_set_redirection(c) != ESP_OK) break;
+            esp_http_client_close(c);
+            continue;
+        }
+        got_response = true;
+        break;
     }
-    esp_http_client_fetch_headers(c);
-    int status = esp_http_client_get_status_code(c);
-    if (status != 200) {
+    if (!got_response || status != 200) {
         char m[64]; snprintf(m, sizeof(m), "manifest http %d", status);
         SK_LOG_E("ota", "check.fail", "reason=http_%d", status);
         set_state(SK_OTA_ERROR, m);
@@ -527,11 +549,15 @@ static const sk_cli_command_t s_cmds[] = {
       .usage   = "ota status",
       .help_block =
           "Returns a snapshot of the firmware-update subsystem:\n"
-          "  state              idle | checking | downloading | installing | error\n"
-          "  current_version    firmware version currently running\n"
-          "  available_version  version found by the last `ota check` (if any)\n"
-          "  partition          active slot — factory | ota_0 | ota_1\n"
-          "  last_error         human message if the previous attempt failed\n"
+          "  state              idle | checking | update_available | no_update |\n"
+          "                     downloading | done | error\n"
+          "  current            firmware version currently running\n"
+          "  remote             version found by the last `ota check` (if any)\n"
+          "  running_partition  active slot — factory | ota_0 | ota_1\n"
+          "  can_rollback       whether a previous image exists to roll back to\n"
+          "  has_sha256         true if the staged update carries a hash to verify\n"
+          "  sha256_prefix      first 8 hex chars of that hash (when present)\n"
+          "  message            human message from the previous attempt\n"
           "\n"
           "Read-only — never triggers a download or a reboot.\n"
           "\n"

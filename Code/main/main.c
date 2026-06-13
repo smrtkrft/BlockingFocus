@@ -81,10 +81,9 @@
 // === EDIT [sk_ota] ===================================================
 //
 // Manifest-driven OTA. Boş URL → sk_ota_init no-op (runtime'da disabled).
-// GitHub Releases pattern:
-//   https://github.com/<owner>/<repo>/releases/latest/download/manifest.json
+// GitHub Releases: "latest" otomatik en yeni sürüme yönlenir → URL sabit kalır.
 #define SK_OTA_ENABLE           1
-#define SK_OTA_MANIFEST_URL     ""
+#define SK_OTA_MANIFEST_URL     "https://github.com/smrtkrft/BlockingFocus/releases/latest/download/manifest.json"
 // =====================================================================
 
 // Compile-time guards — typos in EDIT block are caught now, not at first boot.

@@ -21,6 +21,7 @@
 #include <time.h>
 #include <sys/time.h>
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -42,6 +43,16 @@ static const char *TAG = "sk_baseline";
 // === Storage ================================================================
 
 static const char *s_fw_version = "";
+
+// Battery telemetry provider, registered by a device component (bf_battery)
+// so device.info reports REAL battery state instead of a hardcoded
+// placeholder. NULL until registered (early-boot device.info → present:false).
+static sk_battery_provider_fn s_batt_provider = NULL;
+
+void sk_baseline_set_battery_provider(sk_battery_provider_fn fn)
+{
+    s_batt_provider = fn;
+}
 static const char *s_build_info = NULL;
 static int64_t     s_boot_us    = 0;
 
@@ -136,6 +147,23 @@ static sk_err_t cmd_device_info(sk_cli_ctx_t *ctx)
     sk_pass_mode_t pmode = sk_passphrase_get_mode();
     bool pset = sk_passphrase_is_set();
 
+    // Battery block — real state if a provider is registered (bf_battery),
+    // else a present:false placeholder (was hardcoded false before, so the
+    // Device-Info screen always showed "absent" even with a healthy pack).
+    // Built separately so the big positional snprintf below stays one template.
+    char batt[112];
+    {
+        int mv = 0, pct = 0;
+        const char *charge = "discharging";
+        if (s_batt_provider && s_batt_provider(&mv, &pct, &charge)) {
+            snprintf(batt, sizeof(batt),
+                     "{\"present\":true,\"mv\":%d,\"pct\":%d,\"charge\":\"%s\"}",
+                     mv, pct, charge ? charge : "discharging");
+        } else {
+            snprintf(batt, sizeof(batt), "{\"present\":false}");
+        }
+    }
+
     char buf[768];
     int n = snprintf(buf, sizeof(buf),
         // identity (static)
@@ -150,7 +178,7 @@ static sk_err_t cmd_device_info(sk_cli_ctx_t *ctx)
         "\"uptime_sec\":%lld,"
         "\"wifi\":{\"connected\":%s,\"ssid\":\"%s\",\"rssi\":%d,\"ip\":\"%s\"},"
         "\"ble\":{\"advertising\":false,\"paired_clients\":%u},"
-        "\"battery\":{\"present\":false},"
+        "\"battery\":%s,"
         "\"last_error\":null,"
         "\"passphrase\":{\"set\":%s,\"mode\":{\"pairing\":%s,\"always\":%s},\"attempts_left\":%u},"
         "\"bonds\":{\"count\":%u,\"capacity\":%u},"
@@ -169,6 +197,7 @@ static sk_err_t cmd_device_info(sk_cli_ctx_t *ctx)
         w.connected ? "true" : "false",
         w.ssid, w.rssi, w.ip,
         (unsigned)sk_auth_bond_count(),
+        batt,
         pset ? "true" : "false",
         pmode.pairing_required ? "true" : "false",
         pmode.always_required  ? "true" : "false",
@@ -582,7 +611,16 @@ static const sk_cli_command_t s_cmd_time_set = {
 
 esp_err_t sk_baseline_init(const char *fw_version, const char *build_info)
 {
-    s_fw_version = fw_version ? fw_version : "";
+    // Prefer the version baked into the running image (version.txt via
+    // esp_app_desc) so device.info / ota.status always reflect the ACTUAL
+    // flashed binary, not just the compile-time SK_FW_VERSION literal (which
+    // can drift from what is really on the device). Fall back to the literal.
+    const esp_app_desc_t *desc = esp_app_get_description();
+    if (desc && desc->version[0]) {
+        s_fw_version = desc->version;   // static storage in app rodata
+    } else {
+        s_fw_version = fw_version ? fw_version : "";
+    }
     s_build_info = (build_info && build_info[0]) ? build_info : NULL;
     s_boot_us    = esp_timer_get_time();
 

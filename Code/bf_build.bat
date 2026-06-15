@@ -1,20 +1,21 @@
 @echo off
 REM ===========================================================================
 REM  Blocking Focus (BF) firmware - derleme / flash yardimcisi
-REM  Firmware surumu: 0.3.1   (kaynak: main.c SK_FW_VERSION + version.txt)
 REM
-REM  Kullanim (bu .bat esp32\BF klasorundedir):
+REM  Kullanim (bu .bat esp32\BF klasorundedir; cift tiklanabilir):
 REM    bf_build.bat              : sadece derle
-REM    bf_build.bat COM7         : derle + COM7'ye flash + seri monitor ac
-REM    bf_build.bat COM7 nomon   : derle + COM7'ye flash (monitor yok)
+REM    bf_build.bat COM16        : derle + COM16'ya flash + seri monitor
+REM    bf_build.bat COM16 nomon  : derle + COM16'ya flash (monitor yok)
 REM    bf_build.bat clean        : tam temizlik (fullclean) + derle
 REM
-REM  Cikti: build\blocking_focus.bin
-REM  Monitor'den cikis: Ctrl+]
+REM  ONEMLI - flash etmeden once:
+REM    SKAPP'in bu COM portuna baglantisini kes (Cihazlarim -> baglantiyi kes)
+REM    ya da SKAPP'i kapat. Aksi halde port mesgul olur ve esptool
+REM    "could not open port" / "Access is denied" hatasi verir.
 REM ===========================================================================
 setlocal
 
-REM --- Bu makinedeki ESP-IDF kurulumu. Baska makinede bu iki satiri guncelleyin.
+REM --- Bu makinedeki ESP-IDF kurulumu. Baska makinede bu iki satiri guncelle.
 set "IDF_PATH=C:\Espressif\frameworks\esp-idf-v5.5.2"
 set "IDF_TOOLS_PATH=C:\Espressif"
 
@@ -22,41 +23,67 @@ REM --- Proje klasoru = bu .bat'in bulundugu klasor
 set "BF_DIR=%~dp0"
 if "%BF_DIR:~-1%"=="\" set "BF_DIR=%BF_DIR:~0,-1%"
 
+REM --- Arg ayikla: arg1 = "clean" | COM portu | bos ; arg2 = "nomon"
+REM     (Eski surumdeki findstr regex'i COM portunu hic yakalamiyordu, bu
+REM      yuzden COM verince bile flash atlanip yalniz build oluyordu.)
+set "DO_CLEAN="
+set "PORT="
+set "WANT_MON=1"
+if /I "%~1"=="clean" (
+    set "DO_CLEAN=1"
+) else (
+    if not "%~1"=="" set "PORT=%~1"
+)
+if /I "%~2"=="nomon" set "WANT_MON="
+
 if not exist "%IDF_PATH%\export.bat" (
     echo [HATA] ESP-IDF bulunamadi: %IDF_PATH%
-    echo Bu .bat icindeki IDF_PATH satirini kendi IDF yolunuza gore guncelleyin.
-    exit /b 1
+    echo Bu .bat icindeki IDF_PATH satirini kendi IDF yolunuza gore guncelle.
+    goto :end
 )
 
 echo === ESP-IDF ortami hazirlaniyor ===
 call "%IDF_PATH%\export.bat"
 
-if /I "%~1"=="clean" (
+if defined DO_CLEAN (
     echo === fullclean ===
     python "%IDF_PATH%\tools\idf.py" -C "%BF_DIR%" fullclean
 )
 
-echo === Derleniyor: Blocking Focus v0.3.1 ===
+set "FWVER=?"
+if exist "%BF_DIR%\version.txt" set /p FWVER=<"%BF_DIR%\version.txt"
+
+echo === Derleniyor: Blocking Focus firmware v%FWVER% ===
 python "%IDF_PATH%\tools\idf.py" -C "%BF_DIR%" build
 if errorlevel 1 (
     echo [HATA] Derleme basarisiz.
-    exit /b 1
+    goto :end
 )
 
 echo.
-echo === Derleme tamam ===
+echo === Derleme tamam (v%FWVER%) ===
 echo Bin: %BF_DIR%\build\blocking_focus.bin
 
-REM --- Ilk arg bir COM portu ise flash et ---
-echo.%~1| findstr /I /R "^.COM[0-9]" >nul
-if not errorlevel 1 (
-    if /I "%~2"=="nomon" (
-        echo === %~1 portuna flash ===
-        python "%IDF_PATH%\tools\idf.py" -C "%BF_DIR%" -p %~1 flash
-    ) else (
-        echo === %~1 portuna flash + monitor ^(cikis: Ctrl+]^) ===
-        python "%IDF_PATH%\tools\idf.py" -C "%BF_DIR%" -p %~1 flash monitor
-    )
+if not defined PORT goto :end
+
+echo.
+echo === %PORT% portuna flash ===
+echo NOT: SKAPP bu porta bagliysa once baglantiyi kes (yoksa "Access is denied").
+if defined WANT_MON (
+    echo Monitor acilacak ^(cikis: Ctrl+]^)
+    python "%IDF_PATH%\tools\idf.py" -C "%BF_DIR%" -p %PORT% flash monitor
+) else (
+    python "%IDF_PATH%\tools\idf.py" -C "%BF_DIR%" -p %PORT% flash
+)
+if errorlevel 1 (
+    echo.
+    echo [HATA] Flash basarisiz. En olasi neden: COM portu mesgul.
+    echo   1. SKAPP'i kapat ya da Cihazlarim'dan bu cihaza baglantiyi kes
+    echo   2. Baska seri monitor / PuTTY / idf.py monitor acik mi
+    echo   3. Dogru port mu: Aygit Yoneticisi - Baglanti noktalari (COM ve LPT)
 )
 
+:end
 endlocal
+echo.
+pause

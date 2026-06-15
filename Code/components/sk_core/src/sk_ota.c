@@ -18,6 +18,7 @@
 #include <strings.h>
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -35,6 +36,14 @@ static const char *TAG = "sk_ota";
 #define MANIFEST_BUF_SIZE   1536      // manifest.json max size
 #define HASH_READ_CHUNK     1024
 #define DOWNLOAD_STACK      8192
+
+// GitHub release downloads 302-redirect to release-assets.githubusercontent.com
+// with ~900-char signed (JWT) URLs. The default 512-byte esp_http_client
+// buffers cannot serialise a GET request line that long: open() then fails in
+// http_client_prepare_first_line() ("Out of buffer"), which surfaces to the
+// user as "http open". Size the TX (request) and RX (response-header) buffers
+// to hold the long URL plus headers comfortably.
+#define OTA_HTTP_BUF_SIZE   4096
 
 static sk_ota_cfg_t      s_cfg     = {0};
 static sk_ota_status_t   s_status  = { .state = SK_OTA_IDLE };
@@ -168,6 +177,8 @@ static void check_task(void *arg)
         .url               = ca->url,
         .timeout_ms        = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .buffer_size       = OTA_HTTP_BUF_SIZE,
+        .buffer_size_tx    = OTA_HTTP_BUF_SIZE,
         // We drive the request with open()/read() (streaming) so we can cap
         // the manifest size; that path does NOT auto-follow 3xx, so we chase
         // the Location header manually below.
@@ -348,6 +359,8 @@ static void download_task(void *arg)
         .timeout_ms        = 30000,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .buffer_size       = OTA_HTTP_BUF_SIZE,
+        .buffer_size_tx    = OTA_HTTP_BUF_SIZE,
     };
     esp_https_ota_config_t ota_cfg = { .http_config = &http_cfg };
 
@@ -625,10 +638,15 @@ esp_err_t sk_ota_init(const sk_ota_cfg_t *cfg)
     if (!s_mtx) s_mtx = xSemaphoreCreateMutex();
     if (!s_mtx) return ESP_ERR_NO_MEM;
 
-    if (cfg->fw_version) {
-        strncpy(s_cfg_fw_version, cfg->fw_version, sizeof(s_cfg_fw_version) - 1);
-        strncpy(s_status.current_version, cfg->fw_version, sizeof(s_status.current_version) - 1);
-    }
+    // Source the running version from the actual flashed image (version.txt
+    // via esp_app_desc) so ota.status `current` + the semver comparison on
+    // `ota check` always reflect what is REALLY on the device, not just the
+    // compile-time SK_FW_VERSION literal. Fall back to the passed literal.
+    const esp_app_desc_t *desc = esp_app_get_description();
+    const char *run_ver = (desc && desc->version[0]) ? desc->version
+                          : (cfg->fw_version ? cfg->fw_version : "");
+    strncpy(s_cfg_fw_version, run_ver, sizeof(s_cfg_fw_version) - 1);
+    strncpy(s_status.current_version, run_ver, sizeof(s_status.current_version) - 1);
     if (cfg->manifest_url) {
         strncpy(s_cfg_manifest_url, cfg->manifest_url, sizeof(s_cfg_manifest_url) - 1);
     }

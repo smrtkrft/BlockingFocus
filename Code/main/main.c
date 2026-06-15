@@ -50,14 +50,14 @@
 #define SK_HW_REV               'A'
 
 // Human-readable product name shown in CLI banner / help header:
-//   BF-A06TMFSQT - SmartKraft BlockingFocus v0.3.2 (...)
+//   BF-A06TMFSQT - SmartKraft BlockingFocus v0.3.5 (...)
 // Brand "SmartKraft" is fixed in sk_core; this is the per-project part.
 #define SK_PRODUCT_NAME         "BlockingFocus"
 
 // Firmware version — semver. Bump on every release.
 // NOTE: keep in sync with esp32/BF/version.txt (embedded esp_app_desc version)
 // and the published manifest.json `version` field on GitHub Releases.
-#define SK_FW_VERSION           "0.3.2"
+#define SK_FW_VERSION           "0.3.5"
 
 // Optional build tag (git sha, CI build number). NULL = none.
 #define SK_BUILD_INFO           NULL
@@ -103,7 +103,7 @@ _Static_assert(SK_TCP_PORT > 0 && SK_TCP_PORT < 65536,
 static const char *TAG = "main";
 
 // CLI banner status line — fills the parenthesized portion of:
-//   BF-A06TMFSQT - SmartKraft BlockingFocus v0.3.2 (wifi: connected, battery 87%, ...)
+//   BF-A06TMFSQT - SmartKraft BlockingFocus v0.3.5 (wifi: connected, battery 87%, ...)
 // Each part guarded so a missing/uninitialised module is silently skipped.
 // Add timer state, cube face etc. as those bf_* components land.
 static size_t bf_status_line(char *out, size_t cap)

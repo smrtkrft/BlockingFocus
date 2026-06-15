@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 
 #include "pins.h"
+#include "sk_baseline.h"
 #include "sk_capabilities.h"
 #include "sk_cli.h"
 #include "sk_errors.h"
@@ -405,7 +406,13 @@ static void update_charge_state(uint16_t mv, int slope_uv_s)
 static void update_displayed_percent(int raw_pct, bool vbus)
 {
     if (vbus) {
-        if (s_pct_frozen >= 0) s_pct_displayed = s_pct_frozen;
+        // While charging, freeze at the last pre-USB snapshot (CV-phase
+        // voltage can't be mapped to SoC). BUT if we booted already on USB
+        // there is no snapshot yet (s_pct_frozen == -1) — show the voltage-
+        // based estimate instead of a misleading 0% (a full pack at 4.2 V
+        // was reading 0%). compute_percent(4206mV) ~= 100, so a topped-off
+        // cell now correctly reads full.
+        s_pct_displayed = (s_pct_frozen >= 0) ? s_pct_frozen : raw_pct;
         return;
     }
 
@@ -477,6 +484,21 @@ int      bf_battery_percent(void)
 }
 bf_batt_charge_state_t bf_battery_charge_state(void) { return s_charge; }
 bool bf_battery_lockout_active(void) { return s_lockout; }
+
+// device.info battery provider (registered with sk_baseline so device.info
+// reports real battery state instead of a placeholder). Maps internal state
+// to the sk_baseline_set_battery_provider contract.
+static bool batt_info_provider(int *mv, int *pct, const char **charge)
+{
+    if (!bf_battery_present()) return false;
+    if (mv)  *mv  = (int)bf_battery_voltage_mv();
+    if (pct) *pct = bf_battery_percent();
+    if (charge) {
+        *charge = s_charge == BF_BATT_CHARGE_FULL     ? "full" :
+                  s_charge == BF_BATT_CHARGE_CHARGING ? "charging" : "discharging";
+    }
+    return true;
+}
 
 // ---------------------------------------------------------------------
 // CLI
@@ -569,6 +591,7 @@ esp_err_t bf_battery_init(void)
     }
 
     sk_cli_register(&s_cmd_status);
+    sk_baseline_set_battery_provider(batt_info_provider);
     sk_capabilities_register_book("bf_battery", "0.1.0");
 
     // 3072 was overflowing under ESP_LOG vfprintf load when NimBLE notify

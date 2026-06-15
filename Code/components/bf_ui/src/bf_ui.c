@@ -95,6 +95,15 @@ static bool               s_ble_on  = false;
 // status-bar battery icon blinks at 1 Hz (CLAUDE.md hardware rule #8).
 static int                s_battery_pct_real = -1;
 static bool               s_battery_low      = false;
+// VBUS/charge state from `battery.charge_state` events. While charging the
+// status-bar battery icon shows a "+" overlay instead of the (frozen, often
+// near-empty) fill bar, and the low-battery blink is suppressed. Re-enabled
+// for the rev-2 PCB which adds the 5V/VBUS sense the rev-1 board lacked.
+static bool               s_battery_charging = false;
+// True on charge_state "full" (still on the charger, topped off). The icon
+// then shows a completely filled bar instead of the (frozen) percent, so a
+// charged device reads "full" rather than empty.
+static bool               s_battery_full     = false;
 static int64_t            s_battery_blink_last_us = 0;
 #define BATTERY_BLINK_HALF_MS  500    // 1 Hz → 500 ms on / 500 ms off
 
@@ -289,12 +298,15 @@ static void draw_ble_icon(int x, int y, bool connected)
 // from which s_battery_pct_real is updated, so the icon tracks the
 // voltage curve live as the cell discharges (or rises while plugged in).
 //
-// Charging-state overlay (CHG-6 plus sign) intentionally absent — see
-// note in render_status_bar() for why.
-static void draw_battery_icon(int x, int y, int percent)
+// Charging overlay (CHG plus sign) is drawn when `charging` is set — the
+// rev-2 PCB's 5V/VBUS sense feeds bf_battery's `battery.charge_state` event.
+static void draw_battery_icon(int x, int y, int percent, bool charging, bool full)
 {
     if (percent < 0)   percent = 0;
     if (percent > 100) percent = 100;
+    // Topped-off on the charger: show a full bar regardless of the (frozen)
+    // percent, so a charged device reads "full" not empty.
+    if (full) percent = 100;
 
     const int w = 20, h = 9;
     bf_display_fill_rect(x,         y,            w, 1, BF_PIX_ON);  // top
@@ -302,6 +314,15 @@ static void draw_battery_icon(int x, int y, int percent)
     bf_display_fill_rect(x,         y,            1, h, BF_PIX_ON);  // left
     bf_display_fill_rect(x + w - 1, y,            1, h, BF_PIX_ON);  // right
     bf_display_fill_rect(x + w,     y + 2,        2, 5, BF_PIX_ON);  // nub
+
+    if (charging) {
+        // While plugged in the SoC is frozen (often near-empty), so a fill
+        // bar would read as "almost dead" mid-charge. Show a "+" centered in
+        // the interior instead — the universal "charging" mark.
+        bf_display_fill_rect(x + 5, y + 4, 10, 1, BF_PIX_ON);  // horizontal arm
+        bf_display_fill_rect(x + 9, y + 2, 2,  5, BF_PIX_ON);  // vertical arm
+        return;
+    }
 
     int inner_w  = w - 4;
     int filled_w = (inner_w * percent + 50) / 100;
@@ -362,20 +383,18 @@ static void render_status_bar(void)
 
     int pct = (s_battery_pct_real >= 0) ? s_battery_pct_real : 0;
 
-    // PCB-REV1-VBUS: 5v algilama pcb tasariminda unutuldu, ilk parti
-    // pcblerde cihaz sarj ediliyor mu algilanamiyor, ikinci pcb
-    // cizimlerinde eklenecek, o zamana kadar sistemde duzeltme
-    // gerekiyor, gecici olarak kaldirildi, daha sonra yeniden
-    // planlanacak. Bu yuzden CHG-6 "+" overlay'i ve charging suppresses
-    // blink dali kaldirildi; ikon yalnizca s_battery_pct_real'i
-    // (battery.sample event'inden gelen V -> % donusumu) yansitir.
+    // rev-2 PCB has 5V/VBUS sense, so charge state is real again. While
+    // charging the icon shows a "+" overlay (see draw_battery_icon) and the
+    // low-battery blink is suppressed — a device on the charger shouldn't
+    // flash "low" while its voltage ramps up.
     //
-    // <%15 blink: skip drawing the icon for half of every 1 s window
-    // so it visibly flashes ~1 Hz.
-    bool blink_off = s_battery_low &&
+    // <%15 blink (only when NOT charging): skip drawing the icon for half of
+    // every 1 s window so it visibly flashes ~1 Hz.
+    bool blink_off = s_battery_low && !s_battery_charging && !s_battery_full &&
                      ((now_us() / (BATTERY_BLINK_HALF_MS * 1000)) & 1);
     if (!blink_off) {
-        draw_battery_icon(BF_DISPLAY_WIDTH - 22 - 4, by + 2, pct);
+        draw_battery_icon(BF_DISPLAY_WIDTH - 22 - 4, by + 2, pct,
+                          s_battery_charging, s_battery_full);
     }
 }
 
@@ -659,6 +678,22 @@ static void on_battery_lockout(const sk_event_t *evt, void *user)
     render_current();
 }
 
+// `battery.charge_state {"state":"charging"|"full"|"discharging"}` — drives
+// the status-bar "+" charging overlay. Only "charging" shows the "+"; "full"
+// and "discharging" fall back to the normal fill bar. Render immediately so
+// plugging/unplugging the charger flips the icon without waiting a frame.
+static void on_battery_charge_state(const sk_event_t *evt, void *user)
+{
+    (void)user;
+    if (!evt->payload_json) return;
+    bool charging = (strstr(evt->payload_json, "\"state\":\"charging\"") != NULL);
+    bool full     = (strstr(evt->payload_json, "\"state\":\"full\"")     != NULL);
+    if (charging == s_battery_charging && full == s_battery_full) return;
+    s_battery_charging = charging;
+    s_battery_full     = full;
+    render_current();
+}
+
 static void on_timer_tick(const sk_event_t *evt, void *user)
 {
     (void)user;
@@ -890,6 +925,7 @@ esp_err_t bf_ui_init(void)
     sk_event_bus_subscribe("battery.critical",  on_battery_event, NULL, &sub);
     sk_event_bus_subscribe("battery.recovered", on_battery_event, NULL, &sub);
     sk_event_bus_subscribe("battery.lockout",   on_battery_lockout, NULL, &sub);
+    sk_event_bus_subscribe("battery.charge_state", on_battery_charge_state, NULL, &sub);
     sk_event_bus_subscribe("face.tilted",       on_face_tilted,   NULL, &sub);
     // Button release clears the on-screen hold-progress bar.
     sk_event_bus_subscribe("button.released", on_button_released, NULL, &sub);

@@ -239,6 +239,42 @@ static void listen_task(void *arg)
     }
 }
 
+// Forward every device event to all authenticated TCP clients, mirroring the
+// BLE path (sk_transport_ble.c any_event_handler). WITHOUT this, a client
+// connected over WiFi/TCP receives command *responses* but no asynchronous
+// events — so OTA progress (ota.fw.state), battery.*, wifi.state etc. never
+// arrive and event-driven screens (notably the OTA check) hang forever. This
+// was the cause of "OTA kontrol ediliyor" sticking when the device is on WiFi.
+// MSG_DONTWAIT so one slow/backed-up client can't stall the shared event-bus
+// dispatch for the others; a full socket buffer just drops that event for
+// that client (best-effort, like BLE notify).
+static void tcp_any_event_handler(const sk_event_t *evt, void *user)
+{
+    (void)user;
+    if (!evt->name) return;
+    if (strncmp(evt->name, "auth.", 5) == 0) return;   // internal, never forwarded
+
+    char buf[512];
+    int n;
+    if (evt->payload_json) {
+        n = snprintf(buf, sizeof(buf),
+                     "{\"evt\":\"%s\",\"seq\":%lu,\"data\":%s}\n",
+                     evt->name, (unsigned long)evt->seq, evt->payload_json);
+    } else {
+        n = snprintf(buf, sizeof(buf),
+                     "{\"evt\":\"%s\",\"seq\":%lu}\n",
+                     evt->name, (unsigned long)evt->seq);
+    }
+    if (n <= 0 || n >= (int)sizeof(buf)) return;   // drop oversized/truncated
+
+    for (int i = 0; i < CLIENT_MAX; i++) {
+        client_t *c = &s_clients[i];
+        if (c->sock >= 0 && sk_secure_session_authed(&c->session)) {
+            send(c->sock, buf, (size_t)n, MSG_DONTWAIT);
+        }
+    }
+}
+
 static void on_wifi_event(const sk_event_t *evt, void *user)
 {
     (void)user;
@@ -295,6 +331,10 @@ esp_err_t sk_transport_tcp_init(const sk_transport_tcp_cfg_t *cfg)
     // (future-proofing), a wifi-up event will respawn it.
     int sub;
     sk_event_bus_subscribe("wifi.state", on_wifi_event, NULL, &sub);
+    // Forward all device events to authenticated TCP clients (OTA/battery/
+    // wifi/timer/api events). Without this, TCP sessions get responses but
+    // no event stream — see tcp_any_event_handler.
+    sk_event_bus_subscribe("*", tcp_any_event_handler, NULL, &sub);
     sk_capabilities_register_book("sk_transport_tcp", "0.1.0");
     return ESP_OK;
 }

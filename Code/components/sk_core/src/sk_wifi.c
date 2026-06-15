@@ -471,8 +471,24 @@ static void sort_scan_by_rssi_desc(sk_wifi_scan_entry_t *list, int n)
 int sk_wifi_scan(sk_wifi_scan_entry_t *out, int max)
 {
     if (!out || max <= 0) return 0;
-    wifi_scan_config_t cfg = {0};
-    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) return 0;
+    // Coex-friendly scan. WIFI_PS_MAX_MODEM (set on connect) lets the radio
+    // sleep between DTIMs; during a scan that starves per-channel dwell so
+    // few or zero APs are heard, and under SW coexistence the long default
+    // dwell also steals airtime from the live BLE link (supervision timeout
+    // → peer drops → the scan reply never lands). Drop PS for the scan and
+    // cap active dwell so the whole sweep stays ~1.5 s, then restore.
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    wifi_scan_config_t cfg = {
+        .scan_type            = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active.min = 0,
+        .scan_time.active.max = 120,   // ms per channel
+    };
+    esp_err_t serr = esp_wifi_scan_start(&cfg, true);
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+    if (serr != ESP_OK) {
+        SK_LOG_W("wifi", "scan.fail", "err=%s", esp_err_to_name(serr));
+        return 0;
+    }
     uint16_t ap_count = (uint16_t)max;
     wifi_ap_record_t *recs = calloc(ap_count, sizeof(wifi_ap_record_t));
     if (!recs) return 0;
@@ -541,6 +557,29 @@ typedef struct {
 
 static volatile bool s_scan_active = false;
 
+// Escape a raw SSID for embedding inside a JSON string. WiFi SSIDs are
+// arbitrary bytes, not guaranteed printable or UTF-8; an unescaped '"' or
+// '\\' (or a control byte) produces malformed JSON that the app's NDJSON
+// parser silently drops, taking the WHOLE scan reply down with it (so a
+// single oddly-named neighbour network makes every scan look empty/failed).
+// Escapes the JSON-mandatory set; other control bytes become '?'.
+static void json_escape_ssid(char *dst, size_t cap, const char *src)
+{
+    size_t o = 0;
+    for (size_t i = 0; src[i] && o + 2 < cap; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"' || c == '\\') {
+            dst[o++] = '\\';
+            dst[o++] = (char)c;
+        } else if (c < 0x20) {
+            dst[o++] = '?';
+        } else {
+            dst[o++] = (char)c;
+        }
+    }
+    dst[o] = '\0';
+}
+
 static void wifi_scan_worker(void *arg)
 {
     wifi_scan_job_t *job = (wifi_scan_job_t *)arg;
@@ -583,10 +622,12 @@ static void wifi_scan_worker(void *arg)
         off += snprintf(buf + off, 2048 - off, "ok. [");
     }
     for (int i = 0; i < n && off < 1900; i++) {
+        char ssid_esc[96];   // 32-byte SSID, worst case ~2x for escapes
+        json_escape_ssid(ssid_esc, sizeof(ssid_esc), list[i].ssid);
         off += snprintf(buf + off, 2048 - off,
                         "%s{\"ssid\":\"%s\",\"rssi\":%d,\"auth\":%d}",
                         i == 0 ? "" : ",",
-                        list[i].ssid, list[i].rssi, list[i].auth);
+                        ssid_esc, list[i].rssi, list[i].auth);
     }
     if (job->is_machine_mode) {
         off += snprintf(buf + off, 2048 - off, "]}\n");

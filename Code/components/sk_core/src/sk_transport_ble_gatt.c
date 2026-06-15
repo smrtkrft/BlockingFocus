@@ -123,20 +123,33 @@ static void ble_writer(const char *chunk, size_t len, void *user)
     while (off < len) {
         size_t take = len - off;
         if (take > max_payload) take = max_payload;
-        struct os_mbuf *om = ble_hs_mbuf_from_flat(chunk + off, take);
-        if (!om) {
-            ESP_LOGW(TAG, "ble_writer dropped: mbuf alloc failed (chunk %zu/%zu)",
-                     off + take, len);
-            s_last_notify_failed = true;
-            return;
+
+        // Flow control. Under WiFi/BLE coexistence a wifi.scan hogs the
+        // radio for ~1.5 s, and a large reply is many notify PDUs back to
+        // back; either way the controller's TX path can briefly run dry and
+        // ble_gatts_notify_custom returns BLE_HS_ENOMEM (or the mbuf pool is
+        // momentarily empty). The old code bailed on the first ENOMEM and
+        // truncated the reply, so the peer's NDJSON line never ended in '\n'
+        // and the request timed out (exactly the wifi.scan symptom). Retry
+        // the same chunk with a short yield — that lets the controller drain
+        // (this part is single-core) — up to ~600 ms before giving up.
+        // ble_gatts_notify_custom consumes the mbuf on every outcome (see
+        // ble_gatt.h), so each attempt allocates a fresh one and we never
+        // free it ourselves (doing so would double-free).
+        int rc = BLE_HS_ENOMEM;
+        for (int attempt = 0; attempt < 60; attempt++) {
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(chunk + off, take);
+            if (!om) {
+                vTaskDelay(pdMS_TO_TICKS(10));     // mbuf pool empty — wait, retry
+                continue;
+            }
+            rc = ble_gatts_notify_custom(s_conn_handle, s_event_tx_val_handle, om);
+            if (rc == 0 || rc != BLE_HS_ENOMEM) break;
+            vTaskDelay(pdMS_TO_TICKS(10));         // tx buffers full — drain, retry
         }
-        int rc = ble_gatts_notify_custom(s_conn_handle, s_event_tx_val_handle, om);
-        ESP_LOGI(TAG, "notify rc=%d chunk %zu/%zu", rc, off + take, len);
         if (rc != 0) {
-            // NimBLE drops the mbuf internally on success but leaks it on
-            // failure — explicit free guards against that. ENOMEM here is
-            // typically a tx-buffer exhaustion; the peer will time out
-            // and retry, which is acceptable for a transient blip.
+            ESP_LOGW(TAG, "ble_writer: notify failed rc=%d after retries (chunk %zu/%zu)",
+                     rc, off + take, len);
             s_last_notify_failed = true;
             return;
         }

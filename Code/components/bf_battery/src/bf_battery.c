@@ -333,8 +333,13 @@ static void update_lockout(uint16_t mv, bool vbus)
         s_lockout_streak = 0;
     }
 
-    // Release on a fresh USB plug-in edge.
-    if (vbus && !s_vbus_prev) {
+    // Release whenever USB is present (level, not just the rising edge).
+    // A rev1 PCB whose VBUS-sense divider is unpopulated can fail to produce
+    // a clean LOW->HIGH edge, which previously left lockout latched forever
+    // with no software escape. Level-release clears it as soon as any sample
+    // reads charging; lockout only ENGAGES on !vbus, so this cannot fight the
+    // engage path.
+    if (vbus) {
         s_lockout = false;
         s_lockout_streak = 0;
     }

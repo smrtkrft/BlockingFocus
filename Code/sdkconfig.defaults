@@ -46,6 +46,12 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 # NVS without encryption — fine for dev boards; enable on production.
 CONFIG_NVS_ENCRYPTION=n
 
+# Compiler optimization: size (-Os) for the shipping binary instead of the
+# IDF default debug build (-Og). Smaller flash + faster; assertions stay
+# enabled (CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE) so failures still
+# panic visibly.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_DEFAULT_LEVEL=3
 

@@ -625,7 +625,7 @@ static void worker_publish_result(const char *name, bool ok, int status, sk_err_
     sk_event_bus_publish("api.sent", payload);
 }
 
-// Bond-keyed HMAC-SHA256 over (body || ":" || timestamp || ":" || nonce_hex).
+// Bond-keyed HMAC-SHA256 over (body || "\n" || timestamp || "\n" || nonce_hex).
 // Output is full 32-byte digest; caller hex-encodes the truncated 16 bytes
 // it actually emits so the wire string stays short.
 static int hmac_sha256(const uint8_t *key, size_t key_len,
@@ -852,9 +852,13 @@ static void send_worker(void *arg)
 
     int64_t t_start = esp_timer_get_time();
 
-    char  url[256];
+    // Sized for the worst case (also satisfies -Os's stricter
+    // -Wformat-truncation): IFTTT URL = 32 (prefix) + url<=191 + 10
+    // ("/with/key/") + token<=127 + NUL = 361; Basic auth = "Basic " +
+    // base64(token), which the compiler bounds by the enc[256] scratch.
+    char  url[400];
     char  body[1024];
-    char  auth_scratch[200];
+    char  auth_scratch[288];
 
     sk_err_t berr = build_request(&job->ep, job->payload,
                                   url, sizeof(url),
@@ -1123,6 +1127,12 @@ static size_t append_ep_json(char *buf, size_t off, size_t cap,
                              const sk_api_endpoint_t *ep, int slot,
                              bool first)
 {
+    // Guard against the snprintf-accumulation overflow: snprintf returns the
+    // WOULD-BE length, so a prior call can push `off` past `cap`. Without this
+    // check `cap - off` below underflows (size_t) and snprintf writes far past
+    // the heap buffer. Once full, every further append is a no-op; the caller
+    // skips the closing bracket and emits truncated-but-safe JSON.
+    if (off >= cap) return off;
     char masked[SK_API_TOKEN_MAX + 1] = {0};
     mask_token(ep->token, masked, sizeof(masked));
     char pid_hex[SK_API_PEER_ID_LEN * 2 + 1] = {0};
@@ -1152,7 +1162,8 @@ static size_t append_ep_json(char *buf, size_t off, size_t cap,
 
 static sk_err_t cmd_api_endpoint_list(sk_cli_ctx_t *ctx)
 {
-    enum { BUF = 4096 };
+    // 5 USER + 8 SYSTEM slots, up to ~535 bytes each -> ~7 KB worst case.
+    enum { BUF = 8192 };
     char *buf = malloc(BUF);
     if (!buf) {
         sk_cli_err(ctx, SK_ERR_INTERNAL, "{\"reason\":\"oom\"}");
@@ -1384,7 +1395,8 @@ static sk_err_t cmd_api_system_purge(sk_cli_ctx_t *ctx)
 
 static sk_err_t cmd_api_system_list(sk_cli_ctx_t *ctx)
 {
-    enum { BUF = 1024 };
+    // 8 SYSTEM slots, up to ~450 bytes each -> ~3.6 KB worst case.
+    enum { BUF = 4096 };
     char *buf = malloc(BUF);
     if (!buf) {
         sk_cli_err(ctx, SK_ERR_INTERNAL, "{\"reason\":\"oom\"}");

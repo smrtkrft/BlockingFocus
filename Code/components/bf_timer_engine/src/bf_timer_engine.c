@@ -48,7 +48,7 @@ static const int s_face_duration_sec[7] = {
     [BF_FACE_X_UP]   =  5 * 60,                 // 5 min
     [BF_FACE_X_DOWN] = 15 * 60,                 // 15 min
     [BF_FACE_Y_UP]   = 30 * 60,                 // 30 min
-    [BF_FACE_Y_DOWN] = 60,                      // TEST: 60 sn (was 60 min)
+    [BF_FACE_Y_DOWN] = 15,                      // TEST: 15 sn (kisa test; was 60 min)
 };
 
 #define LOCK_REMAINING_SEC      60
@@ -302,8 +302,14 @@ static void enter(bf_timer_state_t s)
     publish_state();
 }
 
+// Final-warning vibration latch: fire the warn pulse once per countdown.
+// `== WARN_REMAINING_SEC` could skip the pulse if a 1 Hz tick is delayed and
+// `remaining` steps past the exact value; `<=` + latch is robust.
+static bool s_warned = false;
+
 static void start_countdown(int duration_sec)
 {
+    s_warned = false;
     s_active_duration_sec = duration_sec;
     s_deadline_us = esp_timer_get_time() + (int64_t)duration_sec * 1000000;
     bf_timer_state_t target = (duration_sec <= LOCK_REMAINING_SEC)
@@ -372,8 +378,8 @@ static void on_expired(void)
     // FAZ0_DIAG: gecikme teşhisi için T0 anchor (us-precision, monotonic).
     ESP_LOGW(TAG, "FAZ0_DIAG T0_expire us=%lld", esp_timer_get_time());
 
-    // Geri sayım bitiminde "gel-git" titreşim — sürekli motor yerine
-    // 6 × 250 ms ON / 250 ms OFF (3 sn toplam). Pulsing pattern net
+    // Geri sayım bitiminde "gel-git" titreşim: sürekli motor yerine
+    // 4 × 500 ms ON / 250 ms OFF (~2750 ms toplam). Pulsing pattern net
     // "süre bitti" feedback'i, sürekli sürmekten daha algılanır.
     bf_vibration_burst(EXPIRE_BURST_COUNT,
                        EXPIRE_BURST_ON_MS,
@@ -530,7 +536,8 @@ static void handle_tick(void)
     }
     // Final-warning vibration: tam WARN_REMAINING_SEC kalınca tek pulse.
     // Tick 1 Hz → her geri sayım için en fazla 1 kez tetiklenir.
-    if (remaining == WARN_REMAINING_SEC) {
+    if (remaining <= WARN_REMAINING_SEC && !s_warned) {
+        s_warned = true;
         bf_vibration_pulse_ms(WARN_VIBRATION_MS);
     }
     if (s_state == BF_TIMER_RESETTABLE && remaining <= LOCK_REMAINING_SEC) {

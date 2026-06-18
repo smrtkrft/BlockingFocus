@@ -299,6 +299,20 @@ static void on_button(const sk_event_t *evt, void *user)
     xQueueSend(s_q, &out, 0);
 }
 
+// Wake the OLED when a SKAPP session opens (BLE GATT connect). The paired-
+// device scanner only scans advertisements, so "connected" fires solely on a
+// deliberate app connection. Match the quoted token so "disconnected" (which
+// contains the substring "connected") doesn't also trip it.
+static void on_ble_state(const sk_event_t *evt, void *user)
+{
+    (void)user;
+    if (!s_q || !evt->payload_json) return;
+    if (strstr(evt->payload_json, "\"connected\"")) {
+        evt_t out = { .type = EVT_KICK };
+        xQueueSend(s_q, &out, 0);
+    }
+}
+
 static void on_tick_cb(void *arg)
 {
     (void)arg;
@@ -437,6 +451,7 @@ esp_err_t bf_power_init(void)
         { "timer.state",     on_timer_state  },
         { "face.changed",    on_face_changed },
         { "button.released", on_button       },
+        { "ble.state",       on_ble_state    },
     };
     for (size_t i = 0; i < sizeof(subs)/sizeof(subs[0]); i++) {
         esp_err_t serr = sk_event_bus_subscribe(subs[i].t, subs[i].h, NULL, &sub);

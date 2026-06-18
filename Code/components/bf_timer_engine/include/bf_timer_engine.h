@@ -21,11 +21,14 @@ extern "C" {
 //   timer.expired        {"face":N,"duration_sec":N}
 //                        — emitted at countdown=0, before API trigger
 //
-// CLI: `timer.status`, `timer.cancel`
+// CLI: timer.status / timer.cancel are defined but intentionally NOT
+// registered (cancellation is physical-only, by product decision).
 //
 // Face → duration mapping is project-tunable. Default in
-// bf_timer_engine.c maps the 4 timer faces to 5/15/30/60 minutes; the
-// display face arms the next timer; the USB face requests low-power.
+// bf_timer_engine.c maps the timer faces to 5/15/30 min, with the Y-down
+// face set to 15 s as a short test value; the display face arms the next
+// timer; the USB face is handled as idle (BF_TIMER_LOW_POWER is currently
+// unreachable, see the NOTE in bf_timer_engine.c).
 // =====================================================================
 
 typedef enum {

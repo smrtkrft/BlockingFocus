@@ -534,12 +534,17 @@ static void emit_err_json(sk_auth_pairing_writer_t writer, void *user,
 // BOND_STORE_FULL responses so SKAPP can present a peer-removal UI.
 static void emit_bond_store_full(sk_auth_pairing_writer_t writer, void *user)
 {
-    char buf[512];
+    char buf[1024];
     int  o = 0;
     o += snprintf(buf + o, sizeof(buf) - o,
                   "{\"ok\":false,\"err\":\"ERR_BOND_STORE_FULL\",\"params\":{\"peers\":[");
+    // snprintf returns the WOULD-BE length, so `o` can exceed sizeof(buf).
+    // Clamp after every write so a later `sizeof(buf) - o` cannot underflow
+    // (OOB write) and the final writer() length stays inside the buffer
+    // (OOB read). buf is 1024 so all 8 bond slots fit without truncation.
+    if (o > (int)sizeof(buf) - 1) o = (int)sizeof(buf) - 1;
     bool first = true;
-    for (uint8_t i = 0; i < SK_AUTH_BOND_SLOT_COUNT && (size_t)o < sizeof(buf); i++) {
+    for (uint8_t i = 0; i < SK_AUTH_BOND_SLOT_COUNT && (size_t)o < sizeof(buf) - 1; i++) {
         if (!s_slots[i].occupied) continue;
         char peer_hex[SK_AUTH_PEER_ID_LEN * 2 + 1];
         bytes_to_hex_local(s_slots[i].peer_id, SK_AUTH_PEER_ID_LEN, peer_hex);
@@ -552,9 +557,11 @@ static void emit_bond_store_full(sk_auth_pairing_writer_t writer, void *user)
                       (unsigned)i, peer_hex,
                       s_slots[i].label,
                       (long long)s_slots[i].paired_at_unix);
+        if (o > (int)sizeof(buf) - 1) o = (int)sizeof(buf) - 1;
         first = false;
     }
     o += snprintf(buf + o, sizeof(buf) - o, "]}}\n");
+    if (o > (int)sizeof(buf) - 1) o = (int)sizeof(buf) - 1;
     if (o > 0 && writer) writer(buf, (size_t)o, user);
 }
 
@@ -894,14 +901,17 @@ static sk_err_t cmd_bond_list(sk_cli_ctx_t *ctx)
     }
 
     // Streamed JSON build to keep the buffer tight.
-    char buf[640];
+    char buf[1024];
     int  o = 0;
     o += snprintf(buf + o, sizeof(buf) - o,
                   "{\"count\":%u,\"capacity\":%u,\"active_slot\":%d,\"peers\":[",
                   (unsigned)n,
                   (unsigned)SK_AUTH_BOND_SLOT_COUNT,
                   s_active_set ? (int)s_active_slot : -1);
-    for (uint8_t i = 0; i < n && (size_t)o < sizeof(buf); i++) {
+    // Clamp `o` after every snprintf so `sizeof(buf) - o` can never underflow
+    // (OOB write). buf is 1024 so all 8 bond slots fit without truncation.
+    if (o > (int)sizeof(buf) - 1) o = (int)sizeof(buf) - 1;
+    for (uint8_t i = 0; i < n && (size_t)o < sizeof(buf) - 1; i++) {
         char peer_hex[SK_AUTH_PEER_ID_LEN * 2 + 1];
         bytes_to_hex_local(list[i].peer_id, SK_AUTH_PEER_ID_LEN, peer_hex);
         o += snprintf(buf + o, sizeof(buf) - o,
@@ -912,6 +922,7 @@ static sk_err_t cmd_bond_list(sk_cli_ctx_t *ctx)
                       peer_hex,
                       list[i].label,
                       (long long)list[i].paired_at_unix);
+        if (o > (int)sizeof(buf) - 1) o = (int)sizeof(buf) - 1;
     }
     o += snprintf(buf + o, sizeof(buf) - o, "]}");
     sk_cli_ok(ctx, buf);

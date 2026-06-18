@@ -10,7 +10,7 @@ extern "C" {
 // bf_face_detector — cube-face detection from accelerometer.
 //
 // Polls bf_lis3dsh at 10 Hz, picks the dominant axis as the upright
-// orientation, debounces by 2 s (CLAUDE.md hardware rule #3), then
+// orientation, debounces by 1 s (CLAUDE.md hardware rule #3), then
 // publishes face.changed when the committed face flips.
 //
 // Face numbering (raw, axis-driven — independent of cube assembly):

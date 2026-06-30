@@ -648,17 +648,24 @@ done:
     return rc;
 }
 
-// Build the canonical message to sign: `body || "\n" || ts || "\n" || nonce_hex`.
-// Newline separator avoids ambiguity if body already contains digits or hex.
+// Build the canonical message to sign (güvenlik.md Madde 18):
+//   `<body_len> || "\n" || body || "\n" || ts || "\n" || nonce_hex`
+// The leading decimal byte-length prefix makes the framing unambiguous even
+// if the body itself contains `\n<digits>\n<hex>` look-alikes — a length
+// prefix can't be forged into a different field split.
 //
-// The listener side reproduces this string from the same fields and rejects
-// any request whose computed HMAC differs from the X-SK-Signature header,
-// so the canonical form must be identical on both sides.
+// The listener side (SKAPP webhook_receiver.dart) reproduces this string from
+// the same fields and rejects any request whose computed HMAC differs from
+// the X-SK-Signature header, so the canonical form must be byte-identical on
+// both sides. NOTE: changing this format is a lockstep firmware+app break —
+// a device on old firmware will fail signature verification against a new
+// listener (and vice-versa) until both are updated.
 static int build_sign_msg(const char *body, size_t body_len,
                           const char *ts_str, const char *nonce_hex,
                           uint8_t *out, size_t cap)
 {
-    int n = snprintf((char *)out, cap, "%.*s\n%s\n%s",
+    int n = snprintf((char *)out, cap, "%zu\n%.*s\n%s\n%s",
+                     body_len,
                      (int)body_len, body ? body : "",
                      ts_str, nonce_hex);
     if (n < 0 || (size_t)n >= cap) return -1;

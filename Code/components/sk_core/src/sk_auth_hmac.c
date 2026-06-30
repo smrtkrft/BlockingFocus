@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_timer.h"
 #include "mbedtls/md.h"
@@ -33,6 +34,12 @@ void sk_auth_replay_reset(void)
 }
 
 #define TS_WINDOW_SEC 60
+
+// Wall clock is "set" once SKAPP pushes `time.set` (settimeofday in
+// sk_baseline.c). Before that the RTC reads ~1970, so any value past this
+// threshold (~2023-11) means a real time baseline is available and ts_unix
+// can be validated. Mirrors sk_log.c's post-2023 "real time" heuristic.
+#define SK_AUTH_CLOCK_SET_EPOCH 1700000000LL
 
 static bool nonce_seen(uint32_t n)
 {
@@ -76,13 +83,21 @@ esp_err_t sk_auth_verify_message(const char *body, size_t len,
     if (!body || !sig) return ESP_ERR_INVALID_ARG;
     if (!sk_auth__has_token()) return ESP_ERR_INVALID_STATE;
 
-    // Timestamp window (cihazda SNTP yok — upstream bu pencereyi sağlamalı
-    // ya da nonce'a düşer).
-    int64_t now = esp_timer_get_time() / 1000000LL;  // uptime seconds
-    (void)now;
-    // NOTE: Without SNTP we accept any ts; nonce uniqueness carries the
-    // replay guard. Upstream can tighten this when a clock is available.
-    (void)ts_unix;
+    // Timestamp window (güvenlik.md Madde 17). Cihazda SNTP yok, ama SKAPP
+    // `time.set` ile settimeofday çağırıyor; o andan itibaren time(NULL)
+    // gerçek UNIX zamanı döner. Saat ayarlıysa (post-2023) ts_unix'i
+    // ±TS_WINDOW_SEC penceresinde doğrula — böylece cihaz reboot'undan sonra
+    // nonce ringi sıfırlansa bile eski bir capture'ın ts'i bayat kalır ve
+    // replay reddedilir. Saat ayarlı değilse (boot sonrası, time.set öncesi)
+    // eski davranışa düş: replay guard'ı yalnızca nonce benzersizliği taşır.
+    // SKAPP tarafı ts'i gerçek wall-clock saniye olarak gönderiyor
+    // (cli_signer.dart: DateTime.now().millisecondsSinceEpoch ~/ 1000).
+    time_t wall = time(NULL);
+    if ((int64_t)wall > SK_AUTH_CLOCK_SET_EPOCH) {
+        int64_t skew = (int64_t)wall - ts_unix;
+        if (skew < 0) skew = -skew;
+        if (skew > TS_WINDOW_SEC) return ESP_FAIL;  // stale / future ts
+    }
 
     if (nonce_seen(nonce)) return ESP_FAIL;
 
